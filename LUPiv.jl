@@ -31,8 +31,36 @@ function LUUnb(A)
     end
 end
 
+function LU(A,bsize)
+    m, n = size(A);
+    for k=1:bsize:n,
+        nb=min(n-k+1,bsize);
+        ind1 = k:k+nb-1;
+        ind2 = k+nb:n;
+        A11 = sub(A,ind1,ind1);
+        A12 = sub(A,ind1,ind2);
+        A21 = sub(A,ind2,ind1);
+        A22 = sub(A,ind2,ind2);
+        
+        LUUnb(A11)
+
+        # A21 := A21 inv(U11)
+        BLAS.trsm!('R','U','N','N',1.,A11,A21);
+
+        # A12 := inv(L11) A12
+        BLAS.trsm!('L','L','N','U',1.,A11,A12);
+        
+        # A22 := A22 - A21*A12
+        BLAS.gemm!('N','N',-1.,A21,A12,1.,A22)
+    end
+end
+
+println("Starting unpivoted unblocked LU factorization")
 A = copy(AOrig);
+tic();
 LUUnb(A);
+unbTime=toq();
+println("Unblocked time: $unbTime")
 L = tril(A,-1) + Diagonal(ones(n));
 U = triu(A);
 decompError=norm(AOrig - L*U);
@@ -46,6 +74,24 @@ relResidError=residError/bNorm;
 println("|| b - A x ||_2             = $residError")
 println("|| b - A x ||_2 / || b ||_2 = $relResidError")
 
+println("Starting unpivoted blocked LU factorization")
+A = copy(AOrig);
+tic();
+LU(A,96);
+blockTime=toq();
+println("Blocked time: $blockTime")
+L = tril(A,-1) + Diagonal(ones(n));
+U = triu(A);
+decompError=norm(AOrig - L*U);
+relDecompError=decompError/ANorm;
+println("|| A - L U ||             = $decompError")
+println("|| A - L U || / || A ||   = $relDecompError")
+# A = L U implies inv(A) b = inv(L U) b = inv(U) inv(L) b
+x = U\(L\b);
+residError=norm(b-AOrig*x);
+relResidError=residError/bNorm;
+println("|| b - A x ||_2             = $residError")
+println("|| b - A x ||_2 / || b ||_2 = $relResidError")
 
 # In[3]:
 
@@ -129,6 +175,7 @@ function LUPartial(A,bsize)
 end
 
 # Run the unblocked code
+println("Starting unblocked partially-pivoted LU")
 A = copy(AOrig);
 tic();
 p = LUPartialUnb(A);
@@ -148,6 +195,7 @@ println("|| b - A x ||_2             = $residError")
 println("|| b - A x ||_2 / || b ||_2 = $relResidError")
 
 # Run the blocked code
+println("Starting blocked partially-pivoted LU")
 A = copy(AOrig);
 tic();
 p = LUPartial(A,96);
@@ -219,21 +267,27 @@ function LURook(A)
     return p, q
 end
 
+println("Starting rook-pivoted LU")
 A = copy(AOrig);
+tic();
 p, q = LURook(A);
+rookTime = toq();
+println("Rook time: $rookTime")
 
 # Expand A into L and U
 L = tril(A,-1) + Diagonal(ones(n));
 U = triu(A);
-P = ExpandPerm(p);
-Q = ExpandPerm(q);
-
 # Compute residuals for the original factorization and a linear solve
-decompError=norm(P*AOrig*Q' - L*U);
+decompError=norm(AOrig[p,q] - L*U);
 relDecompError=decompError/ANorm;
 println("|| P A Q' - L U ||           = $decompError")
 println("|| P A Q' - L U || / || A || = $relDecompError")
-x = Q'*(U\(L\(P*b)));
+qInv=zeros(n);
+for j=1:n
+  qInv[q[j]] = j;
+end
+x = U\(L\b[p]);
+x[:] = x[qInv];
 residError=norm(b-AOrig*x);
 relResidError=residError/bNorm;
 println("|| b - A x ||_2             = $residError")
@@ -272,19 +326,26 @@ function LUFull(A)
     return p, q
 end
 
+println("Starting fully-pivoted LU")
 A = copy(AOrig);
+tic();
 p, q = LUFull(A);
+fullTime = toq();
+println("Full time: $fullTime")
 L = tril(A,-1) + Diagonal(ones(n));
 U = triu(A);
-P = ExpandPerm(p);
-Q = ExpandPerm(q);
 # Compute and print the error in the decomposition and A \ b
-decompError=norm(P*AOrig*Q' - L*U);
+decompError=norm(AOrig[p,q] - L*U);
 relDecompError=decompError/ANorm;
 println("|| P A Q' - L U ||           = $decompError")
 println("|| P A Q' - L U || / || A || = $relDecompError")
 # P A Q' = L U implies inv(A) b = inv(P' L U Q) b = Q' inv(U) inv(L) P b
-x = Q'*(U\(L\(P*b)));
+qInv=zeros(n);
+for j=1:n
+  qInv[q[j]] = j;
+end
+x = U\(L\b[p]);
+x[:] = x[qInv];
 residError=norm(b-AOrig*x);
 relResidError=residError/bNorm;
 println("|| b - A x ||_2             = $residError")
